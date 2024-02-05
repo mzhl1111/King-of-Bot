@@ -3,15 +3,13 @@ package com.kob.backend.consumer;
 import com.alibaba.fastjson2.JSONObject;
 import com.kob.backend.consumer.utils.Game;
 import com.kob.backend.consumer.utils.JwtAuthentication;
+import com.kob.backend.mapper.BotMapper;
 import com.kob.backend.mapper.ReplayMapper;
 import com.kob.backend.mapper.UserMapper;
+import com.kob.backend.pojo.Bot;
 import com.kob.backend.pojo.User;
-import com.sun.org.apache.xpath.internal.operations.Mult;
 import java.io.IOException;
-import java.util.Iterator;
-import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 import javax.websocket.OnClose;
 import javax.websocket.OnMessage;
 import javax.websocket.OnOpen;
@@ -28,14 +26,16 @@ import org.springframework.web.client.RestTemplate;
 @ServerEndpoint("/websocket/{token}")
 public class WebSocketServer {
 
+  private final static int PLAY_AS_HUMAN_BOT_ID = -1;
   private Session session = null;
   private User user;
   final public static ConcurrentHashMap<Integer, WebSocketServer> users =
       new ConcurrentHashMap<>();
   private static UserMapper userMapper;
   public static ReplayMapper replayMapper;
-  private static RestTemplate restTemplate;
-  private Game game = null;
+  private static BotMapper botMapper;
+  public static RestTemplate restTemplate;
+  public Game game = null;
   private final static String addPlayerUrl = "http://192.168.1.103:8889/player/add/";
   private final static String removePlayerUrl = "http://192.168.1.103:8889/player/remove/";
 
@@ -47,6 +47,11 @@ public class WebSocketServer {
   @Autowired
   public void setReplayMapper(ReplayMapper replayMapper) {
     WebSocketServer.replayMapper = replayMapper;
+  }
+
+  @Autowired
+  public void setBotMapper(BotMapper botMapper) {
+    WebSocketServer.botMapper = botMapper;
   }
 
   @Autowired
@@ -83,11 +88,13 @@ public class WebSocketServer {
     }
   }
 
-  public static void startGame(Integer aId, Integer bId) {
+  public static void startGame(Integer aId, Integer aBotId, Integer bId, Integer bBotId) {
     User a = userMapper.selectById(aId);
+    Bot botA = botMapper.selectById(aBotId);
     User b = userMapper.selectById(bId);
+    Bot botB = botMapper.selectById(bBotId);
 
-    Game game = new Game(13, 14, 20, a.getId(), b.getId());
+    Game game = new Game(13, 14, 20, a.getId(), botA, b.getId(), botB);
     game.createMap();
     game.start();
 
@@ -119,11 +126,12 @@ public class WebSocketServer {
     if (users.get(b.getId()) != null) users.get(b.getId()).sendMessage(respB.toJSONString());
   }
 
-  private void startMatching() {
+  private void startMatching(Integer botId) {
     System.out.println("start matching");
     MultiValueMap<String, String> data = new LinkedMultiValueMap<>();
     data.add("userId", this.user.getId().toString());
     data.add("ranking", this.user.getRanking().toString());
+    data.add("botId", botId.toString());
     restTemplate.postForObject(addPlayerUrl, data, String.class);
   }
 
@@ -138,9 +146,9 @@ public class WebSocketServer {
     System.out.printf("%d, %d, %d, %d \n", game.getPlayerA().getId(), game.getPlayerB().getId(),
         user.getId(), d);
     if (game.getPlayerA().getId().equals(user.getId())) {
-      game.secureSetNextA(d);
+      if (game.getPlayerA().getBotId().equals(PLAY_AS_HUMAN_BOT_ID)) game.secureSetNextA(d);
     } else if (game.getPlayerB().getId().equals(user.getId())) {
-      game.secureSetNextB(d);
+      if (game.getPlayerB().getBotId().equals(PLAY_AS_HUMAN_BOT_ID)) game.secureSetNextB(d);
     }
   }
 
@@ -152,8 +160,9 @@ public class WebSocketServer {
     String event = data.getString("event");
     System.out.println(data);
     if ("start matching".equals(event)) {
-      startMatching();
+      startMatching(data.getInteger("botId"));
     } else if ("stop matching".equals(event)) {
+      stopMatching();
     } else if ("move".equals(event)) {
       move(data.getInteger("direction"));
     }

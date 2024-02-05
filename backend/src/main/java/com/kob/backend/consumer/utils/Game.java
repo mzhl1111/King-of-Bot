@@ -3,6 +3,7 @@ package com.kob.backend.consumer.utils;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.kob.backend.consumer.WebSocketServer;
+import com.kob.backend.pojo.Bot;
 import com.kob.backend.pojo.Replay;
 import java.util.ArrayList;
 import java.util.Date;
@@ -12,6 +13,9 @@ import java.util.Random;
 import java.util.concurrent.locks.ReentrantLock;
 import lombok.Getter;
 import lombok.Setter;
+import org.springframework.security.core.parameters.P;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 
 public class Game extends Thread {
   private final Integer rows;
@@ -34,14 +38,32 @@ public class Game extends Thread {
 
   private String status = "Playing"; // one of "Playing" or "Finished"
   private String loser = ""; // one of "All", "A", "B"
+  private final static String addBotUrl = "http://192.168.1.103:8890/bot/add/";
 
-  public Game(Integer rows, Integer cols, Integer nWalls, Integer idA, Integer idB) {
+  public Game(Integer rows, Integer cols, Integer nWalls, Integer idA, Bot botA, Integer idB,
+              Bot botB) {
     this.rows = rows;
     this.cols = cols;
     this.nWalls = nWalls;
     this.g = new int[rows][cols];
-    this.playerA = new Player(idA, this.rows - 2, 1, new ArrayList<>());
-    this.playerB = new Player(idB, 1, this.cols - 2, new ArrayList<>());
+
+    Integer aBotId = -1;
+    Integer bBotId = -1;
+    String aBotCode = "";
+    String bBotCode = "";
+
+    if (botA != null) {
+      aBotId = botA.getId();
+      aBotCode = botA.getContent();
+    }
+
+    if (botB != null) {
+      bBotId = botB.getId();
+      bBotCode = botB.getContent();
+    }
+
+    this.playerA = new Player(idA, aBotId, aBotCode, this.rows - 2, 1, new ArrayList<>());
+    this.playerB = new Player(idB, bBotId, bBotCode, 1, this.cols - 2, new ArrayList<>());
 
   }
 
@@ -176,6 +198,46 @@ public class Game extends Thread {
     }
   }
 
+  private String getJsonfiyInput(Player player) {
+    // JSON {Map, me{sx, xy}, [history], oppo(sx, sy), [oppo history]}
+    Player me, oppo;
+    if (playerA.getId().equals(player.getId())) {
+      me = playerA;
+      oppo = playerB;
+    } else {
+      me = playerB;
+      oppo = playerA;
+    }
+
+    JSONObject input = new JSONObject();
+    JSONObject meState = new JSONObject();
+    JSONObject oppoState = new JSONObject();
+    input.put("map", jsonifyMap());
+
+    meState.put("sx", me.getSx());
+    meState.put("sy", me.getSy());
+    meState.put("operation_history", me.jsonifySteps());
+
+    oppoState.put("sx", oppo.getSx());
+    oppoState.put("sy", oppo.getSy());
+    oppoState.put("operation_history", oppo.jsonifySteps());
+
+    input.put("me", meState.toJSONString());
+    input.put("oppo", oppoState.toJSONString());
+
+    return input.toJSONString();
+  }
+
+  private void sendBotCode(Player player) {
+    if (player.getBotId().equals(-1)) return; // play as human do not need to send code
+    MultiValueMap<String, String> data = new LinkedMultiValueMap<>();
+    data.add("userId", player.getId().toString());
+    data.add("botCode", player.getBotCode());
+    data.add("input", getJsonfiyInput(player));
+
+    System.out.println(data);
+    WebSocketServer.restTemplate.postForObject(addBotUrl, data, String.class);
+  }
 
   private boolean nextStep() { // wait for two plays to finish the next step
     System.out.println("nextstep");
@@ -185,25 +247,28 @@ public class Game extends Thread {
       throw new RuntimeException(e);
     }
 
-      for (int i = 0; i < 50; i++) {
-        try {
-          Thread.sleep(100);
-          lock.lock();
-          try{
-            if (nextStepA != null && nextStepB != null) {
-              playerA.getSteps().add(nextStepA);
-              playerB.getSteps().add(nextStepB);
-              System.out.printf("next step set success a  %d, b  %d \n", nextStepA, nextStepB);
-              return true;
-            }
-          } finally {
-            lock.unlock();
+    sendBotCode(playerA);
+    sendBotCode(playerB);
+
+    for (int i = 0; i < 50; i++) {
+      try {
+        Thread.sleep(100);
+        lock.lock();
+        try{
+          if (nextStepA != null && nextStepB != null) {
+            playerA.getSteps().add(nextStepA);
+            playerB.getSteps().add(nextStepB);
+            System.out.printf("next step set success a  %d, b  %d \n", nextStepA, nextStepB);
+            return true;
           }
-        } catch (InterruptedException e) {
-          e.printStackTrace();
+        } finally {
+          lock.unlock();
         }
+      } catch (InterruptedException e) {
+        e.printStackTrace();
       }
-      return false;
+    }
+    return false;
   }
 
 
