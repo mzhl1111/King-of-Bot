@@ -1,0 +1,33 @@
+body {
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    counter-reset: my-count 2;
+    animation: countdown 3s linear infinite;
+    
+    &::after {
+      content: counter(my-count);
+      font-size: 30em;
+    }
+  }
+  
+  @keyframes countdown {
+    0% {
+      background: hsl(0,100%,20%);
+    }
+    33% {
+      counter-increment: my-count -1;
+      background: hsl(90,100%,20%);
+    }
+    66% {
+      counter-increment: my-count -2;
+      background: hsl(180,100%,20%);
+    }
+    100% {
+      counter-increment: my-count -3;
+      background: hsl(270,100%,20%);
+    }
+  }
+  
